@@ -89,9 +89,12 @@ namespace Piedone.Combinator.Models
             get
             {
                 var fullPath = NormalizedFullPath;
-
-                return Uri.IsWellFormedUriString(fullPath, UriKind.Absolute)
-                    && new Uri(fullPath).Host != _httpContext.Request.Url.Host;
+                if (Uri.IsWellFormedUriString(fullPath, UriKind.Absolute)) {
+                    var uri = new Uri(fullPath);
+                    return uri.Host != _httpContext.Request.Url.Host || uri.Port != _httpContext.Request.Url.Port; 
+                } else { 
+                    return false; 
+                }
             }
         }
 

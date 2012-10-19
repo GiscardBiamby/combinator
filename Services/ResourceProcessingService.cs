@@ -2,22 +2,59 @@
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
+using Orchard.FileSystems.Media;
 using Piedone.Combinator.Extensions;
 using Piedone.Combinator.Models;
 
+using System.Web;
+using System.Web.Mvc;
+using System.Web.Routing;
+using Orchard.Utility.Extensions;
+using Orchard.Mvc.Extensions; 
+
 namespace Piedone.Combinator.Services
 {
-    public class ResourceProcessingService : IResourceProcessingService
-    {
+    public class ResourceProcessingService : IResourceProcessingService {
+        private readonly IStorageProvider _storageProvider;
         private readonly IResourceFileService _resourceFileService;
         private readonly IMinificationService _minificationService;
+        private static readonly bool AzureMode = true;
+        
+        private const string _rootPath = "Combinator/";
+        private string _publicUrlExample = "";
+        private string PublicUrlExample {
+            get {
+                if (string.IsNullOrWhiteSpace(_publicUrlExample)) {
+                    var path = _rootPath + "sample.txt";
+                    try {
+                        var file = _storageProvider.CreateFile(path);
+                    }
+                    catch (Exception e) { 
+                    //    exists = e.Message.IndexOf("exists", StringComparison.OrdinalIgnoreCase)>=0; 
+                    }
+
+                    _publicUrlExample = _storageProvider.GetPublicUrl(path); 
+                }
+                return _publicUrlExample; 
+            }
+        }
+
+        // can cache this if needed:
+        private bool IsMediaStorageUsingAbsoluteUris {
+            get {
+                return Uri.IsWellFormedUriString(PublicUrlExample, UriKind.Absolute);
+            }
+        }
 
         public ResourceProcessingService(
             IResourceFileService resourceFileService,
-            IMinificationService minificationService)
+            IMinificationService minificationService,
+            IStorageProvider storageProvider)
         {
             _resourceFileService = resourceFileService;
             _minificationService = minificationService;
+            _storageProvider = storageProvider; 
+            
         }
 
         public void ProcessResource(CombinatorResource resource, StringBuilder combinedContent, ICombinatorSettings settings)
@@ -91,8 +128,9 @@ namespace Piedone.Combinator.Services
                 });
         }
 
-        private static void AdjustRelativePaths(CombinatorResource resource)
+        private void AdjustRelativePaths(CombinatorResource resource)
         {
+            var urlHelper = GetUrlHelper(); 
             ProcessUrlSettings(resource,
                 (match) =>
                 {
@@ -102,11 +140,30 @@ namespace Piedone.Combinator.Services
 
                     // Remote paths are preserved as full urls, local paths become uniformed relative ones.
                     string uriString = "";
-                    if (resource.IsCdnResource || resource.AbsoluteUrl.Host != uri.Host) uriString = uri.ToStringWithoutScheme();
+                    if (IsMediaStorageUsingAbsoluteUris && !resource.IsCdnResource) {
+                        uriString = urlHelper.MakeAbsolute(urlHelper.Content("~" + uri.GetComponents(UriComponents.PathAndQuery | UriComponents.Fragment, UriFormat.UriEscaped) ));
+                    }
+                    else if (resource.IsCdnResource || resource.AbsoluteUrl.Host != uri.Host) uriString = uri.ToStringWithoutScheme();
                     else uriString = uri.PathAndQuery;
 
                     return "url(\"" + uriString + "\")";
                 });
+        }
+
+        private static UrlHelper GetUrlHelper() {
+            var httpContext = HttpContext.Current;
+
+            if (httpContext == null) {
+                var request = new HttpRequest("/", "http://example.com", "");
+                var response = new HttpResponse(new StringWriter());
+                httpContext = new HttpContext(request, response);
+            }
+
+            var httpContextBase = new HttpContextWrapper(httpContext);
+            var routeData = new RouteData();
+            var requestContext = new RequestContext(httpContextBase, routeData);
+
+            return new UrlHelper(requestContext);
         }
 
         private static void ProcessUrlSettings(CombinatorResource resource, MatchEvaluator evaluator)
